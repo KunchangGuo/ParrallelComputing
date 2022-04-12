@@ -1,0 +1,7 @@
+# depslib dependency file v1.0
+1647390390 source:d:\大二下课程\并行计算\第一次实验\code\task2\task2\main.cpp
+	<iostream>
+	<windows.h>
+	<stdlib.h>
+	<math.h>
+
