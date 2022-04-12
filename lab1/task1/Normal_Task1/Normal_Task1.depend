@@ -1,0 +1,15 @@
+# depslib dependency file v1.0
+1647350936 source:d:\大二下课程\并行计算\第一次实验\code\task1\normal_task1\main.cpp
+	<iostream>
+	<windows.h>
+	<stdlib.h>
+	<math.h>
+	<time.h>
+	<unistd.h>
+
+1647187877 source:d:\大二下课程\并行计算\第一次实验\code\task2\task2_normal.cpp
+	<iostream>
+	<windows.h>
+	<stdlib.h>
+	<math.h>
+
