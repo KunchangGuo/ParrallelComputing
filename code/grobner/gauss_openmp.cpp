@@ -11,7 +11,7 @@
 #include <semaphore.h>
 using namespace std;
 
-#define THREAD_NUM 4
+#define THREAD_NUM 2
 #define SERIAL 0
 #define SIMD 1
 #define PTHREAD 2
@@ -770,7 +770,7 @@ public:
                                 eliminatantLine = &eliminatantWindow[i];
                                 eliminatorLine = &eliminatorWindow[j];
 
-                                cout<<"before"<<eliminatantLine->toString()<<endl;
+                                // cout<<"before"<<eliminatantLine->toString()<<endl;
 
                                 //唤醒工作线程执行多线程的消去
                                 for (int k = 0; k < THREAD_NUM; k++)
@@ -782,7 +782,7 @@ public:
                                 {
                                     sem_wait(&sem_main);
                                 }
-                                cout<<"after"<<eliminatantLine->toString()<<endl;
+                                // cout<<"after"<<eliminatantLine->toString()<<endl;
 
                                 //重建索引
                                 eliminatantWindow[i].refreshSecondLevelIndex();
@@ -953,8 +953,8 @@ public:
                                 eliminatantLine = &eliminatantWindow[i];
                                 eliminatorLine = &eliminatorWindow[j];
 
-                                cout<<"before     "<<eliminatantLine->toString()<<endl;
-                                cout<<"eliminator "<<eliminatorLine->toString()<<endl;
+                                // cout<<"before     "<<eliminatantLine->toString()<<endl;
+                                // cout<<"eliminator "<<eliminatorLine->toString()<<endl;
 
                                 //唤醒工作线程执行多线程的消去
                                 for (int k = 0; k < THREAD_NUM; k++)
@@ -965,9 +965,9 @@ public:
                                 for (int k = 0; k < THREAD_NUM; k++)
                                 {
                                     sem_wait(&sem_main_SIMD);
-                                    cout<<"waited"<<endl;
+                                    // cout<<"waited"<<endl;
                                 }
-                                cout<<"after      "<<eliminatantLine->toString()<<endl;
+                                // cout<<"after      "<<eliminatantLine->toString()<<endl;
 
                                 //重建索引
                                 eliminatantWindow[i].refreshSecondLevelIndex();
@@ -1047,7 +1047,7 @@ public:
     }
 };
 
-void getTime(GrobnerBasedGaussElimination &g, int mode, double &duration1)
+double getTime(GrobnerBasedGaussElimination &g, int mode)
 {
     using namespace std::chrono;
     high_resolution_clock::time_point start = high_resolution_clock::now();
@@ -1070,7 +1070,7 @@ void getTime(GrobnerBasedGaussElimination &g, int mode, double &duration1)
     }
     high_resolution_clock::time_point end = high_resolution_clock::now();
     duration<double> time_span = duration_cast<duration<double>>(end - start);
-    duration1 += time_span.count();
+    return time_span.count();
 }
 
 int main()
@@ -1083,14 +1083,14 @@ int main()
     GrobnerBasedGaussElimination g[4];
     using namespace std::chrono;
 
-    g[2].init(exampleDirectoryPath);
-    high_resolution_clock::time_point start1 = high_resolution_clock::now();
-    //===measure===
-    g[2].solvePthread();
-    //===measure===
-    high_resolution_clock::time_point end1 = high_resolution_clock::now();
-    duration<double> time_span1 = duration_cast<duration<double>>(end1 - start1);
-    timeSpan[2] = time_span1.count();
+    // g[2].init(exampleDirectoryPath);
+    // high_resolution_clock::time_point start1 = high_resolution_clock::now();
+    // //===measure===
+    // g[2].solvePthread();
+    // //===measure===
+    // high_resolution_clock::time_point end1 = high_resolution_clock::now();
+    // duration<double> time_span1 = duration_cast<duration<double>>(end1 - start1);
+    // timeSpan[2] = time_span1.count();
 
     // g[3].init(exampleDirectoryPath);
     // high_resolution_clock::time_point start2 = high_resolution_clock::now();
@@ -1101,11 +1101,11 @@ int main()
     // duration<double> time_span2 = duration_cast<duration<double>>(end2 - start2);
     // timeSpan[3] = time_span2.count();
 
-    // for (int i = 0; i < 2; i++)
-    // {
-    //     g[i].init(exampleDirectoryPath);
-    //     getTime(g[i], i, timeSpan[i]);
-    // }
+    for (int i = 0; i < 4; i++)
+    {
+        g[i].init(exampleDirectoryPath);
+        timeSpan[i] = getTime(g[i], i);
+    }
 
     cout << "Serial:   " << timeSpan[0] << endl
          << "SIMD:     " << timeSpan[1] << endl
@@ -1136,9 +1136,9 @@ void *xorFunc(void *param)
 
         eliminatantLine->xorPthread(*(eliminatorLine), threadID);
 
+        pthread_barrier_wait(&barrier);
         sem_post(&sem_main);   //唤醒主线程
         sem_wait(&sem_worker); //等待被主线程唤醒
-        pthread_barrier_wait(&barrier);
     }
 }
 
@@ -1162,8 +1162,8 @@ void *xorFunc_SIMD(void *param)
 
         eliminatantLine->xorSIMDandPthread(*(eliminatorLine), threadID);
 
+        pthread_barrier_wait(&barrier_SIMD);
         sem_post(&sem_main_SIMD);   //唤醒主线程
         sem_wait(&sem_worker_SIMD); //等待被主线程唤醒
-        pthread_barrier_wait(&barrier_SIMD);
     }
 }
