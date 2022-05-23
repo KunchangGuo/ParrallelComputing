@@ -5,25 +5,30 @@
 #include <unordered_set>
 #include <bitset>
 #include <chrono>
-#include <arm_neon.h>
+// #include <arm_neon.h>
 #include <unistd.h>
 #include <string.h>
 #include <semaphore.h>
+#include <pthread.h>
+#include <omp.h>
 using namespace std;
 
 #define THREAD_NUM 2
+#define WINDOWSIZE 512
+
 #define SERIAL 0
-#define SIMD 1
+// #define SIMD 1
 #define PTHREAD 2
-#define BOTH 3
+// #define BOTH 3
+#define OPENMP 4
 
 sem_t sem_main;
 sem_t sem_worker;
 pthread_barrier_t barrier;
 
-sem_t sem_main_SIMD;
-sem_t sem_worker_SIMD;
-pthread_barrier_t barrier_SIMD;
+// sem_t sem_main_SIMD;
+// sem_t sem_worker_SIMD;
+// pthread_barrier_t barrier_SIMD;
 
 const int maxColunmAmount = 1011;
 
@@ -37,7 +42,7 @@ typedef struct
 } threadParm_t;
 
 void *xorFunc(void *param);
-void *xorFunc_SIMD(void *param);
+// void *xorFunc_SIMD(void *param);
 
 //===位图类===
 class BitMap
@@ -230,26 +235,26 @@ public:
         refreshHighestNumber();
     }
 
-    void xorSIMD(BitMap &eliminator)
-    {
-        int32x4_t t1;
-        int32x4_t t2;
-        //对连续的所有块进行异或
-        for (int i = 0; i < secondLevelIndexLength; i += 4)
-        {
-            t1 = vld1q_s32(bits + i);
-            t2 = vld1q_s32(eliminator.bits + i);
-            t1 = veorq_s32(t1, t2);
-            vst1q_s32(bits + i, t1);
-            vst1q_s32(eliminator.bits + i, t2);
-        }
+    // void xorSIMD(BitMap &eliminator)
+    // {
+    //     int32x4_t t1;
+    //     int32x4_t t2;
+    //     //对连续的所有块进行异或
+    //     for (int i = 0; i < secondLevelIndexLength; i += 4)
+    //     {
+    //         t1 = vld1q_s32(bits + i);
+    //         t2 = vld1q_s32(eliminator.bits + i);
+    //         t1 = veorq_s32(t1, t2);
+    //         vst1q_s32(bits + i, t1);
+    //         vst1q_s32(eliminator.bits + i, t2);
+    //     }
 
-        //更新二级索引
-        refreshSecondLevelIndex();
+    //     //更新二级索引
+    //     refreshSecondLevelIndex();
 
-        //更新最左端列号
-        refreshHighestNumber();
-    }
+    //     //更新最左端列号
+    //     refreshHighestNumber();
+    // }
 
     //按ID划分的异或运算
     void xorPthread(BitMap &eliminator, int threadID)
@@ -263,22 +268,63 @@ public:
         }
     }
 
-    //按ID划分的SIMD异或运算
-    void xorSIMDandPthread(BitMap &eliminator, int threadID)
+    // //按ID划分的SIMD异或运算
+    // void xorSIMDandPthread(BitMap &eliminator, int threadID)
+    // {
+    //     int myStart = secondLevelIndexLength / THREAD_NUM * threadID;
+    //     int myEND = secondLevelIndexLength / THREAD_NUM * (threadID + 1);
+    //     int32x4_t t1;
+    //     int32x4_t t2;
+    //     //对任务范围内连续的块进行异或
+    //     for (int i = myStart; i < myEND; i += 4)
+    //     {
+    //         t1 = vld1q_s32(bits + i);
+    //         t2 = vld1q_s32(eliminator.bits + i);
+    //         t1 = veorq_s32(t1, t2);
+    //         vst1q_s32(bits + i, t1);
+    //         vst1q_s32(eliminator.bits + i, t2);
+    //     }
+    // }
+
+    void xorOpenMP(BitMap &eliminator)
     {
-        int myStart = secondLevelIndexLength / THREAD_NUM * threadID;
-        int myEND = secondLevelIndexLength / THREAD_NUM * (threadID + 1);
-        int32x4_t t1;
-        int32x4_t t2;
-        //对任务范围内连续的块进行异或
-        for (int i = myStart; i < myEND; i += 4)
+        // cout<<"here"<<endl;
+        int i;
+        int *bits1 = this->bits;
+        int *bits2 = eliminator.bits;
+        // cout<<"secondlevelindex:"<<secondLevelIndexLength<<endl;
+#pragma omp parallel for num_threads(THREAD_NUM) schedule(dynamic, 16) default(none) private(i) shared(bits1,bits2,bits, secondLevelIndexLength, eliminator,std::cout)
+        for (i = 0; i < secondLevelIndexLength; i++)
         {
-            t1 = vld1q_s32(bits + i);
-            t2 = vld1q_s32(eliminator.bits + i);
+            // cout<<omp_get_thread_num()<<endl<<this->toString()<<endl<<eliminator.toString()<<endl;
+            *(bits1+i)^=*(bits2+i);
+            // cout<<"here2"<<endl;
+        }
+
+            //更新二级索引
+        refreshSecondLevelIndex();
+
+        //更新最左端列号
+        refreshHighestNumber();
+    }
+
+    void xorSIMDAndOpenMP(BitMap &eliminator)
+    {
+        #pragma omp parallel for num_threads(THREAD_NUM) schedule(dynamic, 16) default(none) private(i) shared(secondLevelIndexLength, eliminator)
+        for (int i = 0; i < secondLevelIndexLength; i += 4)
+        {
+            int32x4_t t1 = vld1q_s32(bits + i);
+            int32x4_t t2 = vld1q_s32(eliminator.bits + i);
             t1 = veorq_s32(t1, t2);
             vst1q_s32(bits + i, t1);
             vst1q_s32(eliminator.bits + i, t2);
         }
+
+        //更新二级索引
+        refreshSecondLevelIndex();
+
+        //更新最左端列号
+        refreshHighestNumber();
     }
 };
 
@@ -291,8 +337,8 @@ private:
     string resultPath = "";           //结果文件的绝对路径
     string eliminatorPath = "";       //消元子文件的绝对路径
 
-    int eliminatantWindowSize = 12;   //一轮做消去的被消元子的行数，即滑动窗在被消元子上的大小
-    int eliminatorWindowSize = 12;    //一轮做消去的消元子的行数，即滑动窗在消元子上的大小
+    int eliminatantWindowSize = WINDOWSIZE;   //一轮做消去的被消元子的行数，即滑动窗在被消元子上的大小
+    int eliminatorWindowSize = WINDOWSIZE;    //一轮做消去的消元子的行数，即滑动窗在消元子上的大小
     vector<BitMap> eliminatantWindow; //被消元子滑动窗
     vector<BitMap> eliminatorWindow;  //消元子滑动窗
 
@@ -524,131 +570,131 @@ public:
         eliminator.close();
     }
 
-    // SIMD消去
-    void solveSIMD()
-    {
-        //逐批读入被消元子，对每一批被消元子进行消去，并将消去结果写入结果文件
-        fstream eliminatant;
-        eliminatant.open(eliminatantPath, ios::in);
-        vector<string> eliminatantSparseWindow; //被消元子字符串型滑动窗
-        fstream eliminator;
-        eliminator.open(eliminatorPath, ios::in);
-        vector<string> eliminatorSparseWindow;    //消元子字符串型滑动窗
-        unordered_set<int> eliminatorWindowRange; //当前消元子滑动窗的范围
+    // // SIMD消去
+    // void solveSIMD()
+    // {
+    //     //逐批读入被消元子，对每一批被消元子进行消去，并将消去结果写入结果文件
+    //     fstream eliminatant;
+    //     eliminatant.open(eliminatantPath, ios::in);
+    //     vector<string> eliminatantSparseWindow; //被消元子字符串型滑动窗
+    //     fstream eliminator;
+    //     eliminator.open(eliminatorPath, ios::in);
+    //     vector<string> eliminatorSparseWindow;    //消元子字符串型滑动窗
+    //     unordered_set<int> eliminatorWindowRange; //当前消元子滑动窗的范围
 
-        while (!eliminatant.eof())
-        {
-            //每次读入一批被消元子，直到达到滑动窗的大小上限或者读到文件末尾
-            for (int i = 0; i < eliminatantWindowSize && !eliminatant.eof(); i++)
-            {
-                //读取每一行稀疏向量形式的被消元子
-                string eliminatantSparseLine;
-                getline(eliminatant, eliminatantSparseLine);
-                //将读取到的压入滑动窗中
-                if (eliminatantSparseLine != "\0")
-                {
-                    eliminatantSparseWindow.push_back(eliminatantSparseLine);
-                }
-            }
+    //     while (!eliminatant.eof())
+    //     {
+    //         //每次读入一批被消元子，直到达到滑动窗的大小上限或者读到文件末尾
+    //         for (int i = 0; i < eliminatantWindowSize && !eliminatant.eof(); i++)
+    //         {
+    //             //读取每一行稀疏向量形式的被消元子
+    //             string eliminatantSparseLine;
+    //             getline(eliminatant, eliminatantSparseLine);
+    //             //将读取到的压入滑动窗中
+    //             if (eliminatantSparseLine != "\0")
+    //             {
+    //                 eliminatantSparseWindow.push_back(eliminatantSparseLine);
+    //             }
+    //         }
 
-            //将被消元子滑动窗转化为位图形式
-            for (int i = 0; i < eliminatantSparseWindow.size(); i++)
-            {
-                BitMap eliminatantBitMap;
-                eliminatantBitMap.init();
-                eliminatantBitMap.sparseRowToBitMap(eliminatantSparseWindow[i]);
-                eliminatantWindow.push_back(eliminatantBitMap);
-            }
+    //         //将被消元子滑动窗转化为位图形式
+    //         for (int i = 0; i < eliminatantSparseWindow.size(); i++)
+    //         {
+    //             BitMap eliminatantBitMap;
+    //             eliminatantBitMap.init();
+    //             eliminatantBitMap.sparseRowToBitMap(eliminatantSparseWindow[i]);
+    //             eliminatantWindow.push_back(eliminatantBitMap);
+    //         }
 
-            //将被消元子字符串型滑动窗清空，节省内存
-            vector<string>().swap(eliminatantSparseWindow);
+    //         //将被消元子字符串型滑动窗清空，节省内存
+    //         vector<string>().swap(eliminatantSparseWindow);
 
-            //====注意这个部分是否正确
-            //逐批读入消元子，用每一批消元子对被消元子滑动窗进行消去
-            for (int i = 0; i < eliminatantWindow.size(); i++)
-            {
-                //每次读入一批消元子，直到这一行被消元子变成空行或者成为升格的消元子
-                while (true)
-                {
-                    //空行或者为升格后的消元子则直接进行下一步
-                    if (eliminatantWindow[i].getHighestNumber() == -1 || eliminatantWindow[i].isEliminator())
-                    {
-                        break;
-                    }
+    //         //====注意这个部分是否正确
+    //         //逐批读入消元子，用每一批消元子对被消元子滑动窗进行消去
+    //         for (int i = 0; i < eliminatantWindow.size(); i++)
+    //         {
+    //             //每次读入一批消元子，直到这一行被消元子变成空行或者成为升格的消元子
+    //             while (true)
+    //             {
+    //                 //空行或者为升格后的消元子则直接进行下一步
+    //                 if (eliminatantWindow[i].getHighestNumber() == -1 || eliminatantWindow[i].isEliminator())
+    //                 {
+    //                     break;
+    //                 }
 
-                    //读入一批消元子
-                    for (int j = 0; j < eliminatorWindowSize; j++)
-                    {
-                        //读取每一行稀疏向量形式的消元子
-                        string eliminatorSparseLine;
-                        if (eliminator.eof())
-                        {
-                            eliminator.close(); //这里使用seekg的方法调整读入位置会读取空行，因此重新打开
-                            eliminator.open(eliminatorPath, ios::in);
-                        }
-                        getline(eliminator, eliminatorSparseLine);
+    //                 //读入一批消元子
+    //                 for (int j = 0; j < eliminatorWindowSize; j++)
+    //                 {
+    //                     //读取每一行稀疏向量形式的消元子
+    //                     string eliminatorSparseLine;
+    //                     if (eliminator.eof())
+    //                     {
+    //                         eliminator.close(); //这里使用seekg的方法调整读入位置会读取空行，因此重新打开
+    //                         eliminator.open(eliminatorPath, ios::in);
+    //                     }
+    //                     getline(eliminator, eliminatorSparseLine);
 
-                        //将读取到的压入消元子滑动窗中
-                        if (eliminatorSparseLine != "\0")
-                        {
-                            eliminatorSparseWindow.push_back(eliminatorSparseLine);
-                        }
-                    }
+    //                     //将读取到的压入消元子滑动窗中
+    //                     if (eliminatorSparseLine != "\0")
+    //                     {
+    //                         eliminatorSparseWindow.push_back(eliminatorSparseLine);
+    //                     }
+    //                 }
 
-                    //将字符串型消元子滑动窗转化为BitMap形式
-                    for (int j = 0; j < eliminatorSparseWindow.size(); j++)
-                    {
-                        BitMap eliminatorBitMap;
-                        eliminatorBitMap.init();
-                        eliminatorBitMap.sparseRowToBitMap(eliminatorSparseWindow[j]);
-                        eliminatorWindow.push_back(eliminatorBitMap);
-                        eliminatorWindowRange.insert(eliminatorBitMap.getHighestNumber());
-                    }
+    //                 //将字符串型消元子滑动窗转化为BitMap形式
+    //                 for (int j = 0; j < eliminatorSparseWindow.size(); j++)
+    //                 {
+    //                     BitMap eliminatorBitMap;
+    //                     eliminatorBitMap.init();
+    //                     eliminatorBitMap.sparseRowToBitMap(eliminatorSparseWindow[j]);
+    //                     eliminatorWindow.push_back(eliminatorBitMap);
+    //                     eliminatorWindowRange.insert(eliminatorBitMap.getHighestNumber());
+    //                 }
 
-                    int originSize = eliminatorWindow.size();
+    //                 int originSize = eliminatorWindow.size();
 
-                    //清空字符串型消元子滑动窗，节省内存
-                    vector<string>().swap(eliminatorSparseWindow);
+    //                 //清空字符串型消元子滑动窗，节省内存
+    //                 vector<string>().swap(eliminatorSparseWindow);
 
-                    //先判断当前行是否可以进行消元
-                    while (eliminatorWindowRange.find(eliminatantWindow[i].getHighestNumber()) != eliminatorWindowRange.end())
-                    {
-                        for (int j = 0; j < eliminatorWindow.size(); j++)
-                        {
-                            if (eliminatorWindow[j].getHighestNumber() == eliminatantWindow[i].getHighestNumber())
-                            {
-                                eliminatantWindow[i].xorSIMD(eliminatorWindow[j]);
-                                break;
-                            }
-                        }
-                    }
+    //                 //先判断当前行是否可以进行消元
+    //                 while (eliminatorWindowRange.find(eliminatantWindow[i].getHighestNumber()) != eliminatorWindowRange.end())
+    //                 {
+    //                     for (int j = 0; j < eliminatorWindow.size(); j++)
+    //                     {
+    //                         if (eliminatorWindow[j].getHighestNumber() == eliminatantWindow[i].getHighestNumber())
+    //                         {
+    //                             eliminatantWindow[i].xorSIMD(eliminatorWindow[j]);
+    //                             break;
+    //                         }
+    //                     }
+    //                 }
 
-                    //判断当前行是否可以升格
-                    if (eliminatantWindow[i].getHighestNumber() != -1 && eliminatorLeftHashSet.find(eliminatantWindow[i].getHighestNumber()) == eliminatorLeftHashSet.end())
-                    {
-                        //可以升格，加入到消元子中，同时更新消元子索引，同时表示该行运算完毕，写入结果文件
-                        eliminatantWindow[i].setToEliminator();
-                        eliminatorWindow.push_back(eliminatantWindow[i]);
-                        eliminatorLeftHashSet.insert(eliminatantWindow[i].getHighestNumber());
-                        writeEliminatorWindowToTempFile(eliminatorWindow, originSize);
-                        writeEliminatantWindowToResultFile(eliminatantWindow[i]);
-                    }
+    //                 //判断当前行是否可以升格
+    //                 if (eliminatantWindow[i].getHighestNumber() != -1 && eliminatorLeftHashSet.find(eliminatantWindow[i].getHighestNumber()) == eliminatorLeftHashSet.end())
+    //                 {
+    //                     //可以升格，加入到消元子中，同时更新消元子索引，同时表示该行运算完毕，写入结果文件
+    //                     eliminatantWindow[i].setToEliminator();
+    //                     eliminatorWindow.push_back(eliminatantWindow[i]);
+    //                     eliminatorLeftHashSet.insert(eliminatantWindow[i].getHighestNumber());
+    //                     writeEliminatorWindowToTempFile(eliminatorWindow, originSize);
+    //                     writeEliminatantWindowToResultFile(eliminatantWindow[i]);
+    //                 }
 
-                    //如果是空行，写入到结果文件中
-                    if (eliminatantWindow[i].getHighestNumber() == -1)
-                    {
-                        writeEliminatantWindowToResultFile(eliminatantWindow[i]);
-                    }
+    //                 //如果是空行，写入到结果文件中
+    //                 if (eliminatantWindow[i].getHighestNumber() == -1)
+    //                 {
+    //                     writeEliminatantWindowToResultFile(eliminatantWindow[i]);
+    //                 }
 
-                    vector<BitMap>().swap(eliminatorWindow);
-                    eliminatorWindowRange.clear();
-                }
-            }
-            //===这个部分是否正确==正确
-        }
-        eliminatant.close();
-        eliminator.close();
-    }
+    //                 vector<BitMap>().swap(eliminatorWindow);
+    //                 eliminatorWindowRange.clear();
+    //             }
+    //         }
+    //         //===这个部分是否正确==正确
+    //     }
+    //     eliminatant.close();
+    //     eliminator.close();
+    // }
 
     //多线程消去
     void solvePthread()
@@ -834,8 +880,191 @@ public:
         eliminator.close();
     }
 
-    //多线程消去
-    void solveSIMDandPthread()
+    // //多线程消去
+    // void solveSIMDandPthread()
+    // {
+    //     //逐批读入被消元子，对每一批被消元子进行消去，并将消去结果写入结果文件
+    //     fstream eliminatant;
+    //     eliminatant.open(eliminatantPath, ios::in);
+    //     vector<string> eliminatantSparseWindow; //被消元子字符串型滑动窗
+    //     fstream eliminator;
+    //     eliminator.open(eliminatorPath, ios::in);
+    //     vector<string> eliminatorSparseWindow;    //消元子字符串型滑动窗
+    //     unordered_set<int> eliminatorWindowRange; //当前消元子滑动窗的范围
+
+    //     //创建工作线程
+    //     sem_init(&sem_main_SIMD, 0, 0);
+    //     sem_init(&sem_worker_SIMD, 0, 0);
+    //     pthread_barrier_init(&barrier_SIMD, NULL, THREAD_NUM);
+    //     pthread_t handle[THREAD_NUM];
+    //     threadParm_t threadParam[THREAD_NUM];
+    //     for (int i = 0; i < THREAD_NUM; i++)
+    //     {
+    //         threadParam[i].threadID = i;
+    //         threadParam[i].grobner = this;
+    //     }
+    //     for (int i = 0; i < THREAD_NUM; i++)
+    //     {
+    //         pthread_create(&handle[i], NULL, xorFunc_SIMD, &threadParam[i]);
+    //     }
+    //     for (int i = 0; i < THREAD_NUM; i++)
+    //     {
+    //         sem_wait(&sem_main_SIMD);
+    //     }
+
+    //     //主线程执行串行部分
+    //     while (!eliminatant.eof())
+    //     {
+    //         //每次读入一批被消元子，直到达到滑动窗的大小上限或者读到文件末尾
+    //         for (int i = 0; i < eliminatantWindowSize && !eliminatant.eof(); i++)
+    //         {
+    //             //读取每一行稀疏向量形式的被消元子
+    //             string eliminatantSparseLine;
+    //             getline(eliminatant, eliminatantSparseLine);
+    //             //将读取到的压入滑动窗中
+    //             if (eliminatantSparseLine != "\0")
+    //             {
+    //                 eliminatantSparseWindow.push_back(eliminatantSparseLine);
+    //             }
+    //         }
+
+    //         //将被消元子滑动窗转化为位图形式
+    //         for (int i = 0; i < eliminatantSparseWindow.size(); i++)
+    //         {
+    //             BitMap eliminatantBitMap;
+    //             eliminatantBitMap.init();
+    //             eliminatantBitMap.sparseRowToBitMap(eliminatantSparseWindow[i]);
+    //             eliminatantWindow.push_back(eliminatantBitMap);
+    //         }
+
+    //         //将被消元子字符串型滑动窗清空，节省内存
+    //         vector<string>().swap(eliminatantSparseWindow);
+
+    //         //====注意这个部分是否正确==验证正确
+    //         //逐批读入消元子，用每一批消元子对被消元子滑动窗进行消去
+    //         for (int i = 0; i < eliminatantWindow.size(); i++)
+    //         {
+    //             //每次读入一批消元子，直到这一行被消元子变成空行或者成为升格的消元子
+    //             while (true)
+    //             {
+    //                 //空行或者为升格后的消元子则直接进行下一步
+    //                 if (eliminatantWindow[i].getHighestNumber() == -1 || eliminatantWindow[i].isEliminator())
+    //                 {
+    //                     break;
+    //                 }
+
+    //                 //读入一批消元子
+    //                 for (int j = 0; j < eliminatorWindowSize; j++)
+    //                 {
+    //                     //读取每一行稀疏向量形式的消元子
+    //                     string eliminatorSparseLine;
+    //                     if (eliminator.eof())
+    //                     {
+    //                         eliminator.close(); //这里使用seekg的方法调整读入位置会读取空行，因此重新打开
+    //                         eliminator.open(eliminatorPath, ios::in);
+    //                     }
+    //                     getline(eliminator, eliminatorSparseLine);
+
+    //                     //将读取到的压入消元子滑动窗中
+    //                     if (eliminatorSparseLine != "\0")
+    //                     {
+    //                         eliminatorSparseWindow.push_back(eliminatorSparseLine);
+    //                     }
+    //                 }
+
+    //                 //将字符串型消元子滑动窗转化为BitMap形式
+    //                 for (int j = 0; j < eliminatorSparseWindow.size(); j++)
+    //                 {
+    //                     BitMap eliminatorBitMap;
+    //                     eliminatorBitMap.init();
+    //                     eliminatorBitMap.sparseRowToBitMap(eliminatorSparseWindow[j]);
+    //                     eliminatorWindow.push_back(eliminatorBitMap);
+    //                     eliminatorWindowRange.insert(eliminatorBitMap.getHighestNumber());
+    //                 }
+
+    //                 int originSize = eliminatorWindow.size();
+
+    //                 //清空字符串型消元子滑动窗，节省内存
+    //                 vector<string>().swap(eliminatorSparseWindow);
+
+    //                 //先判断当前行是否可以进行消元
+    //                 while (eliminatorWindowRange.find(eliminatantWindow[i].getHighestNumber()) != eliminatorWindowRange.end())
+    //                 {
+    //                     for (int j = 0; j < eliminatorWindow.size(); j++)
+    //                     {
+    //                         if (eliminatorWindow[j].getHighestNumber() == eliminatantWindow[i].getHighestNumber())
+    //                         {
+    //                             // cout<<"here"<<endl;
+    //                             //先标记目前的消元行和被消元行
+    //                             eliminatantLine = &eliminatantWindow[i];
+    //                             eliminatorLine = &eliminatorWindow[j];
+
+    //                             // cout<<"before     "<<eliminatantLine->toString()<<endl;
+    //                             // cout<<"eliminator "<<eliminatorLine->toString()<<endl;
+
+    //                             //唤醒工作线程执行多线程的消去
+    //                             for (int k = 0; k < THREAD_NUM; k++)
+    //                             {
+    //                                 sem_post(&sem_worker_SIMD);
+    //                             }
+    //                             //等待消去完成
+    //                             for (int k = 0; k < THREAD_NUM; k++)
+    //                             {
+    //                                 sem_wait(&sem_main_SIMD);
+    //                                 // cout<<"waited"<<endl;
+    //                             }
+    //                             // cout<<"after      "<<eliminatantLine->toString()<<endl;
+
+    //                             //重建索引
+    //                             eliminatantWindow[i].refreshSecondLevelIndex();
+    //                             //重建最高列号
+    //                             eliminatantWindow[i].refreshHighestNumber();
+
+    //                             break;
+    //                         }
+    //                     }
+    //                 }
+
+    //                 //判断当前行是否可以升格
+    //                 if (eliminatantWindow[i].getHighestNumber() != -1 && eliminatorLeftHashSet.find(eliminatantWindow[i].getHighestNumber()) == eliminatorLeftHashSet.end())
+    //                 {
+    //                     //可以升格，加入到消元子中，同时更新消元子索引，同时表示该行运算完毕，写入结果文件
+    //                     eliminatantWindow[i].setToEliminator();
+    //                     eliminatorWindow.push_back(eliminatantWindow[i]);
+    //                     eliminatorLeftHashSet.insert(eliminatantWindow[i].getHighestNumber());
+    //                     writeEliminatorWindowToTempFile(eliminatorWindow, originSize);
+    //                     writeEliminatantWindowToResultFile(eliminatantWindow[i]);
+    //                 }
+
+    //                 //如果是空行，写入到结果文件中
+    //                 if (eliminatantWindow[i].getHighestNumber() == -1)
+    //                 {
+    //                     writeEliminatantWindowToResultFile(eliminatantWindow[i]);
+    //                 }
+
+    //                 vector<BitMap>().swap(eliminatorWindow);
+    //                 eliminatorWindowRange.clear();
+    //             }
+    //         }
+    //         //===这个部分是否正确==正确
+    //     }
+    //     //从主线程结束工作线程
+    //     for (int i = 0; i < THREAD_NUM; i++)
+    //     {
+    //         pthread_cancel(handle[i]);
+    //     }
+    //     for (int i = 0; i < THREAD_NUM; i++)
+    //     {
+    //         pthread_join(handle[i], NULL);
+    //     }
+    //     sem_destroy(&sem_main_SIMD);
+    //     sem_destroy(&sem_worker_SIMD);
+
+    //     eliminatant.close();
+    //     eliminator.close();
+    // }
+
+    void solveOpenMP()
     {
         //逐批读入被消元子，对每一批被消元子进行消去，并将消去结果写入结果文件
         fstream eliminatant;
@@ -846,27 +1075,6 @@ public:
         vector<string> eliminatorSparseWindow;    //消元子字符串型滑动窗
         unordered_set<int> eliminatorWindowRange; //当前消元子滑动窗的范围
 
-        //创建工作线程
-        sem_init(&sem_main_SIMD, 0, 0);
-        sem_init(&sem_worker_SIMD, 0, 0);
-        pthread_barrier_init(&barrier_SIMD, NULL, THREAD_NUM);
-        pthread_t handle[THREAD_NUM];
-        threadParm_t threadParam[THREAD_NUM];
-        for (int i = 0; i < THREAD_NUM; i++)
-        {
-            threadParam[i].threadID = i;
-            threadParam[i].grobner = this;
-        }
-        for (int i = 0; i < THREAD_NUM; i++)
-        {
-            pthread_create(&handle[i], NULL, xorFunc_SIMD, &threadParam[i]);
-        }
-        for (int i = 0; i < THREAD_NUM; i++)
-        {
-            sem_wait(&sem_main_SIMD);
-        }
-
-        //主线程执行串行部分
         while (!eliminatant.eof())
         {
             //每次读入一批被消元子，直到达到滑动窗的大小上限或者读到文件末尾
@@ -894,7 +1102,7 @@ public:
             //将被消元子字符串型滑动窗清空，节省内存
             vector<string>().swap(eliminatantSparseWindow);
 
-            //====注意这个部分是否正确==验证正确
+            //====注意这个部分是否正确
             //逐批读入消元子，用每一批消元子对被消元子滑动窗进行消去
             for (int i = 0; i < eliminatantWindow.size(); i++)
             {
@@ -948,32 +1156,10 @@ public:
                         {
                             if (eliminatorWindow[j].getHighestNumber() == eliminatantWindow[i].getHighestNumber())
                             {
-                                // cout<<"here"<<endl;
-                                //先标记目前的消元行和被消元行
-                                eliminatantLine = &eliminatantWindow[i];
-                                eliminatorLine = &eliminatorWindow[j];
-
-                                // cout<<"before     "<<eliminatantLine->toString()<<endl;
-                                // cout<<"eliminator "<<eliminatorLine->toString()<<endl;
-
-                                //唤醒工作线程执行多线程的消去
-                                for (int k = 0; k < THREAD_NUM; k++)
-                                {
-                                    sem_post(&sem_worker_SIMD);
-                                }
-                                //等待消去完成
-                                for (int k = 0; k < THREAD_NUM; k++)
-                                {
-                                    sem_wait(&sem_main_SIMD);
-                                    // cout<<"waited"<<endl;
-                                }
-                                // cout<<"after      "<<eliminatantLine->toString()<<endl;
-
-                                //重建索引
-                                eliminatantWindow[i].refreshSecondLevelIndex();
-                                //重建最高列号
-                                eliminatantWindow[i].refreshHighestNumber();
-
+                                // cout<<"before     "<<eliminatantWindow[i].toString()<<endl;
+                                // cout<<"eliminator "<<eliminatorWindow[j].toString()<<endl;
+                                eliminatantWindow[i].xorOpenMP(eliminatorWindow[j]);
+                                // cout<<"after      "<<eliminatantWindow[i].toString()<<endl;
                                 break;
                             }
                         }
@@ -1002,18 +1188,6 @@ public:
             }
             //===这个部分是否正确==正确
         }
-        //从主线程结束工作线程
-        for (int i = 0; i < THREAD_NUM; i++)
-        {
-            pthread_cancel(handle[i]);
-        }
-        for (int i = 0; i < THREAD_NUM; i++)
-        {
-            pthread_join(handle[i], NULL);
-        }
-        sem_destroy(&sem_main_SIMD);
-        sem_destroy(&sem_worker_SIMD);
-
         eliminatant.close();
         eliminator.close();
     }
@@ -1056,14 +1230,17 @@ double getTime(GrobnerBasedGaussElimination &g, int mode)
     case SERIAL:
         g.solve();
         break;
-    case SIMD:
-        g.solveSIMD();
-        break;
+    // case SIMD:
+    //     g.solveSIMD();
+    //     break;
     case PTHREAD:
         g.solvePthread();
         break;
-    case BOTH:
-        g.solveSIMDandPthread();
+    // case BOTH:
+    //     g.solveSIMDandPthread();
+    //     break;
+    case OPENMP:
+        g.solveOpenMP();
         break;
     default:
         break;
@@ -1079,8 +1256,8 @@ int main()
     string exampleDirectory = "测试样例4 矩阵列数1011，非零消元子539，被消元行263";
     string exampleDirectoryPath = basePath + exampleDirectory;
 
-    double timeSpan[4] = {0.0};
-    GrobnerBasedGaussElimination g[4];
+    double timeSpan[5] = {0.0};
+    GrobnerBasedGaussElimination g[5];
     using namespace std::chrono;
 
     // g[2].init(exampleDirectoryPath);
@@ -1101,16 +1278,18 @@ int main()
     // duration<double> time_span2 = duration_cast<duration<double>>(end2 - start2);
     // timeSpan[3] = time_span2.count();
 
-    for (int i = 0; i < 4; i++)
+    for (int i = 0; i < 5; i++)
     {
+        if(i == 1 || i == 3) continue;
         g[i].init(exampleDirectoryPath);
         timeSpan[i] = getTime(g[i], i);
     }
 
     cout << "Serial:   " << timeSpan[0] << endl
-         << "SIMD:     " << timeSpan[1] << endl
+        //  << "SIMD:     " << timeSpan[1] << endl
          << "Pthread:  " << timeSpan[2] << endl
-         << "Both:     " << timeSpan[3] << endl;
+        //  << "Both:     " << timeSpan[3] << endl
+         << "OpenMP:   " << timeSpan[4] << endl;
 
     return 0;
 }
@@ -1142,28 +1321,28 @@ void *xorFunc(void *param)
     }
 }
 
-void *xorFunc_SIMD(void *param)
-{
-    //获取参数
-    threadParm_t *p = (threadParm_t *)param;
-    int threadID = p->threadID;
-    GrobnerBasedGaussElimination *grobner = p->grobner;
-    BitMap *eliminatantLine;
-    BitMap *eliminatorLine;
+// void *xorFunc_SIMD(void *param)
+// {
+//     //获取参数
+//     threadParm_t *p = (threadParm_t *)param;
+//     int threadID = p->threadID;
+//     GrobnerBasedGaussElimination *grobner = p->grobner;
+//     BitMap *eliminatantLine;
+//     BitMap *eliminatorLine;
 
-    sem_post(&sem_main_SIMD);
-    sem_wait(&sem_worker_SIMD);
-    while (true)
-    {
-        eliminatantLine = grobner->eliminatantLine;
-        eliminatorLine = grobner->eliminatorLine;
+//     sem_post(&sem_main_SIMD);
+//     sem_wait(&sem_worker_SIMD);
+//     while (true)
+//     {
+//         eliminatantLine = grobner->eliminatantLine;
+//         eliminatorLine = grobner->eliminatorLine;
 
-        // cout<<"From Thread "<<threadID<<" "<<eliminatantLine->toString()<<endl<<eliminatorLine->toString()<<endl;
+//         // cout<<"From Thread "<<threadID<<" "<<eliminatantLine->toString()<<endl<<eliminatorLine->toString()<<endl;
 
-        eliminatantLine->xorSIMDandPthread(*(eliminatorLine), threadID);
+//         eliminatantLine->xorSIMDandPthread(*(eliminatorLine), threadID);
 
-        pthread_barrier_wait(&barrier_SIMD);
-        sem_post(&sem_main_SIMD);   //唤醒主线程
-        sem_wait(&sem_worker_SIMD); //等待被主线程唤醒
-    }
-}
+//         pthread_barrier_wait(&barrier_SIMD);
+//         sem_post(&sem_main_SIMD);   //唤醒主线程
+//         sem_wait(&sem_worker_SIMD); //等待被主线程唤醒
+//     }
+// }
